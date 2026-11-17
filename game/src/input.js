@@ -1,60 +1,79 @@
-// Keyboard + mouse input, mapped to game actions.
+// Sunset Streets — keyboard and mouse input for the canvas.
+// Tracks held keys, just-pressed edges (cleared once per frame by the
+// game loop), and the mouse position / clicks in canvas pixels.
+
 export function createInput(canvas) {
   const keys = new Set();
-  const input = {
-    up: false,
-    down: false,
-    left: false,
-    right: false,
-    run: false,
-    enter: false,
-    punch: false,
-    mouseDown: false,
-    mouseX: 0,
-    mouseY: 0,
-    mouseWorldX: 0,
-    mouseWorldY: 0,
-    pressed: new Set(), // edge-triggered keys, consumed each frame
-  };
+  const justPressed = new Set();
+  const mouse = { x: 640, y: 360, clicked: false, clickX: 0, clickY: 0, down: false };
 
-  function sync() {
-    input.up = keys.has('KeyW') || keys.has('ArrowUp');
-    input.down = keys.has('KeyS') || keys.has('ArrowDown');
-    input.left = keys.has('KeyA') || keys.has('ArrowLeft');
-    input.right = keys.has('KeyD') || keys.has('ArrowRight');
-    input.run = keys.has('ShiftLeft') || keys.has('ShiftRight');
-    input.enter = input.pressed.has('KeyE');
-    input.punch = input.pressed.has('KeyF') || input.pressed.has('Space');
-  }
+  const GAME_KEYS = [
+    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space',
+    'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyF', 'KeyM',
+    'KeyP', 'KeyH', 'KeyN', 'KeyR', 'Enter', 'ShiftLeft', 'ShiftRight',
+  ];
 
   window.addEventListener('keydown', (e) => {
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
-    if (!e.repeat) input.pressed.add(e.code);
+    if (!GAME_KEYS.includes(e.code)) return;
+    e.preventDefault();
+    if (!e.repeat) justPressed.add(e.code);
     keys.add(e.code);
-    sync();
   });
   window.addEventListener('keyup', (e) => {
     keys.delete(e.code);
-    sync();
+  });
+  window.addEventListener('blur', () => {
+    keys.clear();
+    mouse.down = false;
+  });
+
+  const toCanvas = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: (e.clientX - rect.left) * (canvas.width / rect.width),
+      y: (e.clientY - rect.top) * (canvas.height / rect.height),
+    };
+  };
+  canvas.addEventListener('mousemove', (e) => {
+    const p = toCanvas(e);
+    mouse.x = p.x;
+    mouse.y = p.y;
   });
   canvas.addEventListener('mousedown', (e) => {
-    input.mouseDown = true;
-    input.mouseX = e.offsetX;
-    input.mouseY = e.offsetY;
+    const p = toCanvas(e);
+    mouse.x = p.x; mouse.y = p.y;
+    mouse.clicked = true;
+    mouse.clickX = p.x; mouse.clickY = p.y;
+    mouse.down = true;
   });
   window.addEventListener('mouseup', () => {
-    input.mouseDown = false;
-  });
-  canvas.addEventListener('mousemove', (e) => {
-    input.mouseX = e.offsetX;
-    input.mouseY = e.offsetY;
+    mouse.down = false;
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
-  input.endFrame = () => {
-    input.pressed.clear();
-    sync();
+  return {
+    keys,
+    justPressed,
+    mouse,
+    down(...codes) {
+      return codes.some((c) => keys.has(c));
+    },
+    pressed(...codes) {
+      return codes.some((c) => justPressed.has(c));
+    },
+    // Movement keys as a control bundle for the simulation.
+    controls() {
+      return {
+        up: this.down('KeyW', 'ArrowUp'),
+        down: this.down('KeyS', 'ArrowDown'),
+        left: this.down('KeyA', 'ArrowLeft'),
+        right: this.down('KeyD', 'ArrowRight'),
+        run: this.down('ShiftLeft', 'ShiftRight'),
+      };
+    },
+    endFrame() {
+      justPressed.clear();
+      mouse.clicked = false;
+    },
   };
-  input.isPressed = (code) => input.pressed.has(code);
-  return input;
 }
