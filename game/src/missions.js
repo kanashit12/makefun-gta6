@@ -1,209 +1,193 @@
-// Story missions for Sunset Streets: a five-job arc across Solmar Bay.
-// Each mission is a small state machine: objective text, a target point,
-// a completion check, and a reward. Original story, original characters.
+// Sunset Streets — the five-mission story arc.
+// Each mission has its stages, its target points on the map, its reward,
+// and the logic that advances it as the player moves through Solmar Bay.
+
 import { MISSION_REWARDS } from './config.js';
-import { addWanted, setMessage } from './world.js';
+import { dist } from './random.js';
+import { landmarkById } from './city.js';
 
 export const MISSIONS = [
   {
-    id: 'm1-first-ride',
+    id: 'first-ride',
     title: 'First Ride',
     giver: 'Mara Solis',
-    brief:
-      'Mara needs wheels. Steal any parked car on the Strip and bring it to the Sunset Garage.',
-    objective: 'Steal a car, then drive to the Sunset Garage',
-    target: 'garage',
+    brief: 'Mara needs wheels. Steal any parked car on the Strip and bring it to the Sunset Garage.',
     reward: MISSION_REWARDS[0],
-    check(world) {
-      const p = world.state.player;
-      return !p.onFoot && p.car !== null;
-    },
-    arrive(world) {
-      return !world.state.player.onFoot;
-    },
+    stages: [
+      { objective: 'Steal any parked car', target: null },
+      { objective: 'Bring the car to the Sunset Garage', target: 'garage', radius: 90 },
+    ],
   },
   {
-    id: 'm2-club-pickup',
+    id: 'club-pickup',
     title: 'Club Pickup',
     giver: 'Dante Cole',
-    brief:
-      'Dante left a package at Club Flamingo. Walk in range of the club, grab it, then deliver it to the Portside Docks. Cops patrol the docks — keep it clean.',
-    objective: 'Collect the package at Club Flamingo, deliver to the Docks',
-    target: 'club',
-    target2: 'docks',
+    brief: 'Dante left a package at Club Flamingo. Walk in range of the club, grab it, then deliver it to the Portside Docks. Cops patrol the docks — keep it clean.',
     reward: MISSION_REWARDS[1],
-    stages: ['pickup', 'deliver'],
+    stages: [
+      { objective: 'Pick up the package at Club Flamingo', target: 'flamingo', radius: 90 },
+      { objective: 'Deliver the package to the Portside Docks', target: 'docks', radius: 90 },
+    ],
   },
   {
-    id: 'm3-warehouse-heat',
+    id: 'warehouse-heat',
     title: 'Warehouse Heat',
     giver: 'Mara Solis',
-    brief:
-      'Warehouse 9 is holding out on us. Drive there and lean on the crew — the job gets loud, so expect wanted stars. Lose the cops, then get back to the Old Plaza.',
-    objective: 'Reach Warehouse 9, survive the heat, return to Old Plaza',
-    target: 'warehouse',
-    target2: 'plaza',
+    brief: 'Warehouse 9 is holding out on us. Drive there and lean on the crew — the job gets loud, so expect wanted stars. Lose the cops, then get back to the Old Plaza.',
     reward: MISSION_REWARDS[2],
-    stages: ['reach', 'heat', 'return'],
+    stages: [
+      { objective: 'Reach Warehouse 9', target: 'warehouse9', radius: 90, onEnter: 'heat' },
+      { objective: 'Lose the cops — get wanted back to 0', target: null },
+      { objective: 'Get back to the Old Plaza', target: 'plaza', radius: 90 },
+    ],
   },
   {
-    id: 'm4-night-market',
+    id: 'night-market-run',
     title: 'Night Market Run',
     giver: 'Dante Cole',
-    brief:
-      'The Night Market moves fast cash. Pick up the drop at the market and race it to Casino Sol before the rival crew does. Speed matters — the streets are yours.',
-    objective: 'Grab the drop at the Night Market, race to Casino Sol',
-    target: 'market',
-    target2: 'casino',
+    brief: 'The Night Market moves fast cash. Pick up the drop at the market and race it to Casino Sol before the rival crew does.',
     reward: MISSION_REWARDS[3],
-    stages: ['pickup', 'deliver'],
     timeLimit: 150,
+    stages: [
+      { objective: 'Pick up the drop at the Night Market', target: 'market', radius: 90 },
+      { objective: 'Race the drop to Casino Sol', target: 'casino', radius: 90 },
+    ],
   },
   {
-    id: 'm5-sunset-score',
+    id: 'sunset-score',
     title: 'The Sunset Score',
     giver: 'Mara Solis',
-    brief:
-      'One last job: hit the docks vault, then shake a full five-star response and vanish at the Old Plaza. Pull this off and Solmar Bay is yours.',
-    objective: 'Hit the Docks vault, survive 5 stars, escape to Old Plaza',
-    target: 'docks',
-    target2: 'plaza',
+    brief: 'One last job: hit the docks vault, then shake a full five-star response and vanish at the Old Plaza. Pull this off and Solmar Bay is yours.',
     reward: MISSION_REWARDS[4],
-    stages: ['vault', 'escape'],
+    stages: [
+      { objective: 'Hit the docks vault', target: 'docks', radius: 90, onEnter: 'vault' },
+      { objective: 'Escape to the Old Plaza with 2 stars or less', target: 'plaza', radius: 90, maxWanted: 2 },
+    ],
   },
 ];
 
-export function startMission(world, index) {
-  const def = MISSIONS[index];
-  if (!def) return false;
-  world.state.mission = {
-    def,
-    index,
-    stage: 0,
-    timer: def.timeLimit ?? 0,
-    done: false,
-    startedAt: world.state.time,
-  };
-  setMessage(world, `Mission: ${def.title} — ${def.giver}`, 4);
-  return true;
+export function nextMissionIndex(world) {
+  return world.mission.done.findIndex((d) => !d);
 }
 
-export function currentObjective(world) {
-  const m = world.state.mission;
-  if (!m) return 'Free roam — press M for a mission, E near a car to steal it.';
-  const def = m.def;
-  if (def.stages) {
-    const stage = def.stages[m.stage];
-    if (stage === 'pickup') return `Pick up at ${world.city.points[def.target].label}`;
-    if (stage === 'deliver') return `Deliver to ${world.city.points[def.target2].label}`;
-    if (stage === 'reach') return `Drive to ${world.city.points[def.target].label}`;
-    if (stage === 'heat') return 'Lose the cops! Get your wanted level down.';
-    if (stage === 'return' || stage === 'escape') return `Escape to ${world.city.points[def.target2].label}`;
-    if (stage === 'vault') return `Reach the vault at ${world.city.points[def.target].label}`;
-  }
-  return def.objective;
+export function currentMission(world) {
+  if (!world.mission.active) return null;
+  return MISSIONS[world.mission.index];
 }
 
 export function missionTargetPoint(world) {
-  const m = world.state.mission;
+  const m = currentMission(world);
   if (!m) return null;
-  const def = m.def;
-  const stage = def.stages ? def.stages[m.stage] : null;
-  if (stage === 'pickup' || stage === 'reach' || stage === 'vault') return world.city.points[def.target];
-  if (stage === 'deliver' || stage === 'return' || stage === 'escape') return world.city.points[def.target2];
-  if (stage === 'heat') return null;
-  return world.city.points[def.target];
+  const stage = m.stages[world.mission.stage];
+  if (!stage || !stage.target) return null;
+  const lm = landmarkById(stage.target);
+  return lm ? { x: lm.x, y: lm.y, name: lm.name } : null;
 }
 
-function nearPoint(world, key, radius = 90) {
-  const p = world.city.points[key];
-  const pl = world.state.player;
-  return Math.hypot(pl.x - p.x, pl.y - p.y) < radius;
+export function missionObjectiveText(world) {
+  const m = currentMission(world);
+  if (!m) {
+    const next = nextMissionIndex(world);
+    if (next === -1) return 'Solmar Bay is yours. Free roam — enjoy the sunset.';
+    return `Press M — next job: ${MISSIONS[next].title}`;
+  }
+  const stage = m.stages[world.mission.stage];
+  return `${m.title}: ${stage.objective}`;
 }
 
-/** Advance mission logic one step. Returns true when a mission just completed. */
-export function updateMission(world, dt) {
-  const m = world.state.mission;
-  if (!m || m.done) return false;
-  const def = m.def;
-  const st = world.state;
-
-  if (def.id === 'm1-first-ride') {
-    if (!st.player.onFoot && nearPoint(world, 'garage', 110)) {
-      return completeMission(world);
-    }
-    return false;
-  }
-
-  if (def.id === 'm2-club-pickup' || def.id === 'm4-night-market') {
-    if (m.stage === 0 && nearPoint(world, def.target, 90)) {
-      m.stage = 1;
-      setMessage(world, 'Package secured. Now deliver it!', 3);
-    } else if (m.stage === 1 && nearPoint(world, def.target2, 100)) {
-      return completeMission(world);
-    }
-    if (def.timeLimit) {
-      m.timer -= dt;
-      if (m.timer <= 0) {
-        failMission(world, 'Too slow — the drop went cold.');
-        return false;
-      }
-    }
-    return false;
-  }
-
-  if (def.id === 'm3-warehouse-heat') {
-    if (m.stage === 0 && nearPoint(world, 'warehouse', 100)) {
-      m.stage = 1;
-      addWanted(world, 3);
-      setMessage(world, 'The crew called the cops! Lose them!', 3.5);
-    } else if (m.stage === 1 && st.wanted === 0) {
-      m.stage = 2;
-      setMessage(world, 'Clean. Get back to the Old Plaza.', 3);
-    } else if (m.stage === 2 && nearPoint(world, 'plaza', 110)) {
-      return completeMission(world);
-    }
-    return false;
-  }
-
-  if (def.id === 'm5-sunset-score') {
-    if (m.stage === 0 && nearPoint(world, 'docks', 100)) {
-      m.stage = 1;
-      addWanted(world, 5);
-      st.money += 1000;
-      setMessage(world, 'Vault cracked! +$1000. Now vanish — 5 stars!', 4);
-    } else if (m.stage === 1 && nearPoint(world, 'plaza', 110) && st.wanted <= 2) {
-      return completeMission(world);
-    }
-    return false;
-  }
-  return false;
-}
-
-function completeMission(world) {
-  const m = world.state.mission;
-  m.done = true;
-  world.state.money += m.def.reward;
-  world.state.missionsDone += 1;
-  setMessage(world, `Mission complete: ${m.def.title}  +$${m.def.reward}`, 4);
-  world.state.mission = null;
-  const next = m.index + 1;
-  if (next < MISSIONS.length) {
-    world.state.missionIndex = next;
-    setMessage(world, `Mission complete: ${m.def.title}  +$${m.def.reward}. Next: ${MISSIONS[next].title} (press M)`, 5);
-  } else {
-    setMessage(world, `All missions complete! You own Solmar Bay. +$${m.def.reward}`, 6);
-  }
+export function startNextMission(world) {
+  const idx = nextMissionIndex(world);
+  if (idx === -1) return false;
+  const m = MISSIONS[idx];
+  world.mission.active = true;
+  world.mission.index = idx;
+  world.mission.stage = 0;
+  world.mission.failed = false;
+  world.mission.timer = m.timeLimit ?? 0;
   return true;
 }
 
-export function failMission(world, reason) {
-  const m = world.state.mission;
-  if (!m) return;
-  setMessage(world, `Mission failed: ${reason}`, 4);
-  world.state.mission = null;
+function completeMission(world) {
+  const m = MISSIONS[world.mission.index];
+  world.player.cash += m.reward;
+  world.mission.done[world.mission.index] = true;
+  world.mission.active = false;
+  world.stats.missionsDone++;
 }
 
-export function storyProgress(world) {
-  return `${world.state.missionsDone} / ${MISSIONS.length} missions complete`;
+function failMission(world, reason) {
+  world.mission.active = false;
+  world.mission.failed = true;
+  return reason;
+}
+
+// Called once per fixed step while a mission is active.
+export function advanceMission(world, dt) {
+  const m = currentMission(world);
+  if (!m) return;
+  const st = world.mission;
+  const p = world.player;
+
+  if (m.timeLimit) {
+    st.timer -= dt;
+    if (st.timer <= 0) {
+      const reason = failMission(world, 'Out of time — the rival crew got there first.');
+      world.messages.push({ text: `Mission failed: ${reason}`, t: 0, ttl: 5 });
+      return;
+    }
+  }
+
+  const stage = m.stages[st.stage];
+  if (!stage) return;
+
+  // Stage 0 of First Ride completes the moment Mara is driving.
+  if (m.id === 'first-ride' && st.stage === 0) {
+    if (p.inCar) {
+      st.stage = 1;
+      world.messages.push({ text: 'Nice wheels. Now bring it to the Sunset Garage.', t: 0, ttl: 4 });
+    }
+    return;
+  }
+
+  // Warehouse Heat stage 1: lose the cops.
+  if (m.id === 'warehouse-heat' && st.stage === 1) {
+    if (world.wanted.stars === 0) {
+      st.stage = 2;
+      world.messages.push({ text: 'Clean. Now get back to the Old Plaza.', t: 0, ttl: 4 });
+    }
+    return;
+  }
+
+  // Location stages: arrive at the target point.
+  if (stage.target) {
+    const lm = landmarkById(stage.target);
+    const radius = stage.radius ?? 90;
+    const d = dist(p.x, p.y, lm.x, lm.y);
+    const wantedOk = stage.maxWanted === undefined || world.wanted.stars <= stage.maxWanted;
+    if (d < radius && wantedOk) {
+      if (stage.onEnter === 'heat') {
+        world.wanted.stars = Math.max(world.wanted.stars, 3);
+        world.wanted.heat = 0;
+        world.messages.push({ text: 'The crew called the cops! +3 stars — lose them!', t: 0, ttl: 5 });
+        st.stage++;
+        return;
+      }
+      if (stage.onEnter === 'vault') {
+        p.cash += 1000;
+        world.wanted.stars = 5;
+        world.wanted.heat = 0;
+        world.messages.push({ text: 'Vault cracked: +$1,000. Five stars incoming — run!', t: 0, ttl: 5 });
+        st.stage++;
+        return;
+      }
+      if (st.stage < m.stages.length - 1) {
+        st.stage++;
+        const next = m.stages[st.stage];
+        world.messages.push({ text: next.objective, t: 0, ttl: 4 });
+      } else {
+        completeMission(world);
+        world.messages.push({ text: `${m.title} complete! +$${m.reward}`, t: 0, ttl: 5 });
+      }
+    }
+  }
 }
